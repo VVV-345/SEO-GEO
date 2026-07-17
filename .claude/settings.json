@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la \"C:/Users/42117/.claude/projects/d--AI2test-2github-SEO-GEO/memory/\" 2>&1; echo \"---\"; cat \"C:/Users/42117/.claude/projects/d--AI2test-2github-SEO-GEO/memory/MEMORY.md\" 2>&1 || echo \"\\(no MEMORY.md yet\\)\")",
+      "Read(//c/Users/42117/.claude/projects/d--AI2test-2github-SEO-GEO/memory/**)"
+    ]
+  }
+}
