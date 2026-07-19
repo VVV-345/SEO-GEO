@@ -48,7 +48,7 @@ class RunContext:
             root = project_dir / run_id
             suffix += 1
         context = cls(project, run_id, root)
-        for name in ("input", "keyword", "competitor"):
+        for name in ("input", "keyword", "competitor", "technical_seo"):
             context.agent_dir(name)
         context.update_run(
             status="running",

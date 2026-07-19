@@ -1,0 +1,299 @@
+{
+  "version": "2026.07.1",
+  "checked_at": "2026-07-19",
+  "rules": [
+    {
+      "rule_id": "robots_unavailable",
+      "category": "crawl_indexing",
+      "title": "robots.txt 因网络、限流或服务器错误无法确认",
+      "default_priority": "P1",
+      "confidence": "confirmed",
+      "scope": "site",
+      "impact": "搜索引擎读取抓取规则时可能遇到临时网络、限流或服务器错误，需要核对稳定性。",
+      "fix": "确保根目录 /robots.txt 返回预期内容和稳定的 200 状态；若有意不设置，也应人工确认当前响应不会造成误导。",
+      "validation": "重新请求 /robots.txt，核对状态码、内容和站点上线策略。",
+      "limitations": ["robots.txt 返回 404 通常表示没有额外抓取限制，本规则不会因此自动报错。", "不同搜索引擎对临时错误的处理可能不同。"],
+      "references": [
+        {"source": "百度搜索资源平台", "title": "百度搜索资源平台官方入口", "url": "https://ziyuan.baidu.com/", "checked_at": "2026-07-19"},
+        {"source": "Google Search Central", "title": "Introduction to robots.txt", "url": "https://developers.google.com/search/docs/crawling-indexing/robots/intro", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "robots_blocks_core_url",
+      "category": "crawl_indexing",
+      "title": "robots.txt 阻止用户指定的核心页面",
+      "default_priority": "P0",
+      "confidence": "confirmed",
+      "scope": "core_url",
+      "impact": "核心公开页面无法被遵守 robots.txt 的搜索引擎正常抓取。",
+      "fix": "复核对应 Disallow 规则；若页面应参与搜索，调整 robots.txt 并重新提交抓取。",
+      "validation": "使用 robots 测试工具或程序重新验证该核心 URL 对目标 User-agent 可抓取。",
+      "limitations": ["后台、登录和敏感页面被阻止通常是正确配置。", "禁止抓取不等同于 URL 绝不出现在结果中。"],
+      "references": [
+        {"source": "百度搜索资源平台", "title": "百度搜索资源平台官方入口", "url": "https://ziyuan.baidu.com/", "checked_at": "2026-07-19"},
+        {"source": "Google Search Central", "title": "Introduction to robots.txt", "url": "https://developers.google.com/search/docs/crawling-indexing/robots/intro", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "sitemap_unavailable",
+      "category": "crawl_indexing",
+      "title": "未发现可正常读取的 Sitemap",
+      "default_priority": "P2",
+      "confidence": "likely",
+      "scope": "site",
+      "impact": "大型或更新频繁的网站可能降低 URL 发现效率，但没有 Sitemap 不等于不能被收录。",
+      "fix": "生成只包含规范、可索引 URL 的 XML Sitemap，并在 robots.txt 或搜索平台中提交。",
+      "validation": "验证 Sitemap 返回 200、XML 合法且 URL 属于当前站点。",
+      "limitations": ["小型且内链完整的网站不一定必须依赖 Sitemap。"],
+      "references": [
+        {"source": "百度搜索资源平台", "title": "百度搜索资源平台官方入口", "url": "https://ziyuan.baidu.com/", "checked_at": "2026-07-19"},
+        {"source": "Google Search Central", "title": "Learn about sitemaps", "url": "https://developers.google.com/search/docs/crawling-indexing/sitemaps/overview", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "robots_blocks_sitemap_url",
+      "category": "crawl_indexing",
+      "title": "Sitemap 页面被 robots.txt 阻止抓取",
+      "default_priority": "P1",
+      "confidence": "confirmed",
+      "scope": "page",
+      "impact": "Sitemap 声明希望发现该 URL，但 robots.txt 又阻止抓取，技术信号互相冲突。",
+      "fix": "确认页面目标；需要参与搜索则调整 Disallow，需要保持私密则从 Sitemap 删除。",
+      "validation": "重新检查 Sitemap 和 robots.txt，确认同一 URL 的发现与抓取策略一致。",
+      "limitations": ["后台、登录等非公开 URL 原本就不应出现在 Sitemap。"],
+      "references": [
+        {"source": "百度搜索资源平台", "title": "百度搜索资源平台官方入口", "url": "https://ziyuan.baidu.com/", "checked_at": "2026-07-19"},
+        {"source": "Google Search Central", "title": "Introduction to robots.txt", "url": "https://developers.google.com/search/docs/crawling-indexing/robots/intro", "checked_at": "2026-07-19"},
+        {"source": "Google Search Central", "title": "Learn about sitemaps", "url": "https://developers.google.com/search/docs/crawling-indexing/sitemaps/overview", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "http_error_page",
+      "category": "status_codes",
+      "title": "站内页面返回 4xx 或 5xx",
+      "default_priority": "P1",
+      "confidence": "confirmed",
+      "scope": "page",
+      "impact": "目标内容无法正常访问，站内链接和 Sitemap 可能持续把搜索引擎引向无效页面。",
+      "fix": "恢复应存在的页面；永久删除的页面返回合适状态并移除站内链接和 Sitemap 条目。",
+      "validation": "重新请求受影响 URL，并检查所有指向它的站内链接。",
+      "limitations": ["需要结合页面是否仍有业务价值决定恢复还是清理。"],
+      "references": [
+        {"source": "Google Search Central", "title": "HTTP status codes and network errors", "url": "https://developers.google.com/search/docs/crawling-indexing/http-network-errors", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "missing_title",
+      "category": "on_page",
+      "title": "可访问 HTML 页面缺少 Title",
+      "default_priority": "P1",
+      "confidence": "confirmed",
+      "scope": "page",
+      "impact": "页面缺少明确的标题信号，也难以稳定控制搜索结果标题展示。",
+      "fix": "为页面设置唯一、准确、简洁且符合实际内容的 title 元素。",
+      "validation": "重新抓取 HTML，确认 head 中存在非空且与页面主题一致的 title。",
+      "limitations": ["搜索引擎可能根据其他信号改写标题。"],
+      "references": [
+        {"source": "Google Search Central", "title": "Influencing title links", "url": "https://developers.google.com/search/docs/appearance/title-link", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "duplicate_title",
+      "category": "on_page",
+      "title": "多个页面使用相同 Title",
+      "default_priority": "P1",
+      "confidence": "likely",
+      "scope": "site",
+      "impact": "不同页面的主题和搜索任务难以区分，可能反映模板或重复 URL 问题。",
+      "fix": "先判断页面是否应合并或规范化；保留的独立页面使用能区分主题的 Title。",
+      "validation": "重新导出全站 Title，确认重复组符合预期。",
+      "limitations": ["分页、语言版本等场景需要结合 canonical 与页面目的人工判断。"],
+      "references": [
+        {"source": "Google Search Central", "title": "Influencing title links", "url": "https://developers.google.com/search/docs/appearance/title-link", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "missing_meta_description",
+      "category": "on_page",
+      "title": "HTML 页面缺少 Meta Description",
+      "default_priority": "P2",
+      "confidence": "likely",
+      "scope": "page",
+      "impact": "站点无法主动提供页面摘要候选文本，但搜索引擎仍可能从正文自动生成摘要。",
+      "fix": "为重要且可索引页面编写准确、独特、面向用户的 Meta Description。",
+      "validation": "重新抓取 HTML，确认 description 非空且与页面内容一致。",
+      "limitations": ["Meta Description 缺失通常不是收录阻断问题。", "搜索引擎可能改写摘要。"],
+      "references": [
+        {"source": "Google Search Central", "title": "Control your snippets in search results", "url": "https://developers.google.com/search/docs/appearance/snippet", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "duplicate_meta_description",
+      "category": "on_page",
+      "title": "多个页面使用相同 Meta Description",
+      "default_priority": "P2",
+      "confidence": "likely",
+      "scope": "site",
+      "impact": "不同页面没有提供独立摘要候选文本，也可能暴露模板或重复 URL 问题。",
+      "fix": "先确认页面是否真正独立；为重要独立页面编写符合各自内容的摘要。",
+      "validation": "重新导出全站描述，确认重复组符合页面用途。",
+      "limitations": ["Meta Description 可能被搜索引擎改写。", "重复描述不是单独的收录阻断条件。"],
+      "references": [
+        {"source": "Google Search Central", "title": "Control your snippets in search results", "url": "https://developers.google.com/search/docs/appearance/snippet", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "missing_h1",
+      "category": "on_page",
+      "title": "HTML 页面没有一级主标题",
+      "default_priority": "P2",
+      "confidence": "likely",
+      "scope": "page",
+      "impact": "页面对用户和解析程序的主主题表达可能不清晰。",
+      "fix": "为主要内容设置一个清晰可见、准确描述页面主题的主标题。",
+      "validation": "人工查看页面并确认主标题可见且与内容一致。",
+      "limitations": ["H1 缺失不是单独的收录阻断条件。", "不把多个 H1 自动判为严重错误。"],
+      "references": [
+        {"source": "Google Search Central", "title": "SEO Starter Guide", "url": "https://developers.google.com/search/docs/fundamentals/seo-starter-guide", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "missing_canonical",
+      "category": "crawl_indexing",
+      "title": "HTML 页面未声明 canonical",
+      "default_priority": "P2",
+      "confidence": "manual_review",
+      "scope": "page",
+      "impact": "页面没有主动声明首选规范 URL；是否存在重复风险仍需结合参数、分页和内容关系判断。",
+      "fix": "对存在重复或多个访问地址的页面设置准确的 canonical；独立页面是否补充自引用 canonical 应按站点策略决定。",
+      "validation": "检查 canonical 指向可访问、内容等价的规范 URL，避免机械批量添加错误地址。",
+      "limitations": ["缺少 canonical 不一定是错误。", "搜索引擎会综合其他信号选择规范页。"],
+      "references": [
+        {"source": "Google Search Central", "title": "How to specify a canonical URL", "url": "https://developers.google.com/search/docs/crawling-indexing/consolidate-duplicate-urls", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "cross_domain_canonical",
+      "category": "crawl_indexing",
+      "title": "页面 canonical 指向其他域名",
+      "default_priority": "P1",
+      "confidence": "manual_review",
+      "scope": "page",
+      "impact": "若非有意转载或跨域规范化，可能把页面规范信号交给其他站点。",
+      "fix": "人工确认跨域 canonical 是否符合内容授权和规范化策略；误配时改回真实首选 URL。",
+      "validation": "逐页核对规范目标、内容等价性和业务归属。",
+      "limitations": ["跨域 canonical 可以是合法配置，不能自动认定为错误。"],
+      "references": [
+        {"source": "Google Search Central", "title": "How to specify a canonical URL", "url": "https://developers.google.com/search/docs/crawling-indexing/consolidate-duplicate-urls", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "canonical_target_error",
+      "category": "crawl_indexing",
+      "title": "canonical 指向本次已确认的错误页面",
+      "default_priority": "P1",
+      "confidence": "confirmed",
+      "scope": "page",
+      "impact": "规范 URL 本身无法正常访问，可能造成规范化信号异常。",
+      "fix": "把 canonical 修正为可访问且内容等价的首选 URL，或恢复目标页面。",
+      "validation": "重新请求 canonical 目标并确认返回正常状态。",
+      "limitations": ["只有本次已抓取并确认错误的目标才自动报告。"],
+      "references": [
+        {"source": "Google Search Central", "title": "How to specify a canonical URL", "url": "https://developers.google.com/search/docs/crawling-indexing/consolidate-duplicate-urls", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "core_url_noindex",
+      "category": "crawl_indexing",
+      "title": "用户指定的核心页面声明 noindex",
+      "default_priority": "P0",
+      "confidence": "confirmed",
+      "scope": "core_url",
+      "impact": "页面明确要求搜索引擎不要索引，与核心搜索落地页目标直接冲突。",
+      "fix": "确认页面确实需要参与搜索后移除 noindex，并检查 canonical、robots.txt 与提交状态。",
+      "validation": "重新抓取核心页面，确认 robots meta / X-Robots-Tag 不再包含 noindex。",
+      "limitations": ["只有用户明确指定为核心且应参与搜索的页面才升级为 P0。", "本规则不能证明页面当前是否已被百度收录。"],
+      "references": [
+        {"source": "Google Search Central", "title": "Robots meta tag specifications", "url": "https://developers.google.com/search/docs/crawling-indexing/robots-meta-tag", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "noindex_in_sitemap",
+      "category": "crawl_indexing",
+      "title": "Sitemap URL 同时声明 noindex",
+      "default_priority": "P1",
+      "confidence": "confirmed",
+      "scope": "page",
+      "impact": "Sitemap 表示希望发现该 URL，而 noindex 又要求不索引，信号互相冲突。",
+      "fix": "确认页面目标：需要索引则移除 noindex；无需索引则从 Sitemap 删除。",
+      "validation": "重新抓取页面与 Sitemap，确认两者表达一致。",
+      "limitations": ["不能仅根据 noindex 推断页面当前是否已被百度收录。"],
+      "references": [
+        {"source": "Google Search Central", "title": "Robots meta tag specifications", "url": "https://developers.google.com/search/docs/crawling-indexing/robots-meta-tag", "checked_at": "2026-07-19"},
+        {"source": "Google Search Central", "title": "Learn about sitemaps", "url": "https://developers.google.com/search/docs/crawling-indexing/sitemaps/overview", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "broken_internal_link",
+      "category": "internal_links",
+      "title": "站内链接指向已确认的错误页面",
+      "default_priority": "P1",
+      "confidence": "confirmed",
+      "scope": "link",
+      "impact": "用户和搜索引擎沿站内链接访问时遇到错误页面。",
+      "fix": "更新链接到有效目标，或恢复被链接页面。",
+      "validation": "重新抓取来源页和目标页，确认链接目标返回正常状态。",
+      "limitations": ["只有本次已请求并确认错误的目标才自动报告。"],
+      "references": [
+        {"source": "Google Search Central", "title": "Links crawlable by Google", "url": "https://developers.google.com/search/docs/crawling-indexing/links-crawlable", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "orphan_sitemap_page",
+      "category": "internal_links",
+      "title": "Sitemap 页面在已抓取内链图中没有入链",
+      "default_priority": "P2",
+      "confidence": "manual_review",
+      "scope": "page",
+      "impact": "页面可能缺少正常导航入口，但有限抓取也可能漏掉真实入链。",
+      "fix": "人工确认页面是否应被访问；重要页面应从相关导航、分类页或正文获得合理内链。",
+      "validation": "扩大抓取范围并人工检查导航、模板和页面来源。",
+      "limitations": ["受最大抓取页数和 JavaScript 链接影响，不能自动确认为真正孤立页。"],
+      "references": [
+        {"source": "Google Search Central", "title": "Links crawlable by Google", "url": "https://developers.google.com/search/docs/crawling-indexing/links-crawlable", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "invalid_json_ld",
+      "category": "structured_data",
+      "title": "页面包含无法解析的 JSON-LD",
+      "default_priority": "P2",
+      "confidence": "confirmed",
+      "scope": "page",
+      "impact": "搜索引擎可能无法正确读取该结构化数据块。",
+      "fix": "修复 JSON 语法，并使用官方测试工具验证实际 Schema 类型与必需属性。",
+      "validation": "重新解析 JSON-LD，并运行富媒体结果或 Schema 校验工具。",
+      "limitations": ["JSON 语法正确不代表一定符合某种富媒体结果资格。"],
+      "references": [
+        {"source": "Schema.org", "title": "Schema.org documentation", "url": "https://schema.org/docs/documents.html", "checked_at": "2026-07-19"},
+        {"source": "Google Search Central", "title": "Understand structured data", "url": "https://developers.google.com/search/docs/appearance/structured-data/intro-structured-data", "checked_at": "2026-07-19"}
+      ]
+    },
+    {
+      "rule_id": "lighthouse_low_performance",
+      "category": "performance",
+      "title": "代表页面 Lighthouse 实验室性能分较低",
+      "default_priority": "P2",
+      "confidence": "manual_review",
+      "scope": "page",
+      "impact": "本次受控环境下页面性能较弱，需要结合具体指标和真实用户数据继续诊断。",
+      "fix": "查看 Lighthouse 机会项，优先处理 LCP 资源、阻塞脚本、图片和缓存，再用相同条件复测。",
+      "validation": "重复 Lighthouse 测试，并结合 CrUX、RUM 或实际用户数据验证。",
+      "limitations": ["Lighthouse 是实验室单次数据，不代表所有真实用户。", "不能仅凭性能分推断百度排名变化。"],
+      "references": [
+        {"source": "Chrome for Developers", "title": "Lighthouse performance scoring", "url": "https://developer.chrome.com/docs/lighthouse/performance/performance-scoring", "checked_at": "2026-07-19"},
+        {"source": "web.dev", "title": "Web Vitals", "url": "https://web.dev/articles/vitals", "checked_at": "2026-07-19"}
+      ]
+    }
+  ]
+}

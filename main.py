@@ -9,7 +9,13 @@ for stream in (sys.stdout, sys.stderr):
     if hasattr(stream, "reconfigure"):
         stream.reconfigure(encoding="utf-8", errors="replace")
 
-from app import create_run_context, run_keyword_workflow, write_keyword_output
+from app import (
+    create_run_context,
+    run_keyword_workflow,
+    run_technical_seo_audit,
+    write_keyword_output,
+    write_technical_seo_output,
+)
 from tools.progress import ProgressEvent, ProgressReporter
 
 
@@ -32,9 +38,40 @@ def main(argv: list[str] | None = None) -> int:
     keyword.add_argument("--serp-limit", type=int, default=10, help="每词提取的百度自然结果数")
     keyword.add_argument("--mock", action="store_true", help="完全离线测试，不调用 LLM/百度/客户 URL")
     keyword.add_argument("-o", "--output-dir", default="output")
+    technical = subparsers.add_parser("technical-seo", help="运行技术 SEO 审计 Agent")
+    technical.add_argument("--domain", required=True, help="客户网站域名")
+    technical.add_argument("--goal", default="", help="本次审计目标")
+    technical.add_argument("--files", nargs="*", default=[], help="客户业务资料文件")
+    technical.add_argument("--core-urls", nargs="*", default=[], help="需要重点审计的核心页面")
+    technical.add_argument("--exclude-paths", nargs="*", default=[], help="不抓取的路径前缀")
+    technical.add_argument("--max-pages", type=int, default=50, help="最大抓取页面数")
+    technical.add_argument("--no-lighthouse", action="store_true", help="跳过 Lighthouse 代表页检测")
+    technical.add_argument("--mock", action="store_true", help="离线验证，不访问网站或真实模型")
+    technical.add_argument("-o", "--output-dir", default="output")
     args = parser.parse_args(argv)
 
     progress = ProgressReporter([print_progress])
+    if args.agent == "technical-seo":
+        project = args.domain.replace("https://", "").replace("http://", "").split("/", 1)[0]
+        run = create_run_context([], output_root=args.output_dir, project_name=project)
+        request, snapshot, output = run_technical_seo_audit(
+            domain=args.domain,
+            audit_goal=args.goal,
+            material_files=args.files,
+            core_urls=args.core_urls,
+            excluded_paths=args.exclude_paths,
+            max_pages=args.max_pages,
+            run_lighthouse=not args.no_lighthouse,
+            mock=args.mock,
+            progress=progress,
+        )
+        json_path, markdown_path = write_technical_seo_output(request, snapshot, output, run)
+        print(f"完成：{len(output.findings)} 组技术 SEO 问题")
+        print(f"JSON: {json_path}")
+        print(f"Markdown: {markdown_path}")
+        print(f"Run: {run.root_dir}")
+        return 0
+
     run = create_run_context(args.seed, output_root=args.output_dir)
     result = run_keyword_workflow(
         seeds=args.seed,

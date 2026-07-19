@@ -39,3 +39,13 @@ def load_competitor_llm_config() -> LLMConfig:
         api_key=os.getenv("COMPETITOR_LLM_API_KEY", "").strip() or default.api_key,
         model=os.getenv("COMPETITOR_LLM_MODEL", "").strip() or default.model,
     )
+
+
+def load_technical_seo_llm_config() -> LLMConfig:
+    """读取技术审计模型配置；未设置时复用默认 ``LLM_*``。"""
+    default = load_llm_config()
+    return LLMConfig(
+        base_url=os.getenv("TECHNICAL_SEO_LLM_BASE_URL", "").strip() or default.base_url,
+        api_key=os.getenv("TECHNICAL_SEO_LLM_API_KEY", "").strip() or default.api_key,
+        model=os.getenv("TECHNICAL_SEO_LLM_MODEL", "").strip() or default.model,
+    )

@@ -1,6 +1,6 @@
 # SEO-GEO Agents
 
-Python 实现的中文 SEO/GEO 多 Agent 项目。当前已完成关键词机会 Agent，以及单关键词的 SERP + 竞品分析 Agent。
+Python 实现的中文 SEO/GEO 多 Agent 项目。当前已完成关键词机会 Agent、单关键词的 SERP + 竞品分析 Agent，以及第一版技术 SEO 审计 Agent。
 
 ## 当前关键词流程
 
@@ -39,6 +39,24 @@ python ui.py
 ```
 
 UI 支持填写需求描述、逐次添加或删除多个业务资料文件、填写补充资料、输入多个客户页面 URL，并在各 Agent 标签页展示输出。默认 Mock 模式可离线验证流程。
+
+UI 按 Agent 模块拆分，每个 Agent 自己维护 `ui.py`：
+
+```text
+agents/keyword_agent/ui.py
+agents/serp_competitor_agent/ui.py
+agents/technical_seo_agent/ui.py
+agents/content_brief_agent/ui.py
+agents/writing_agent/ui.py
+agents/quality_agent/ui.py
+
+ui/main_ui.py       # 只组装标签页和公共状态栏
+ui/app_state.py     # 跨 Agent 共享结果与事件
+ui/task_runner.py   # 后台线程、进度和回调
+ui/widgets.py       # 通用控件
+```
+
+Agent UI 不直接读取其他模块控件。关键词 Agent 把候选与 SERP 写入 `AppState`，竞品 Agent 订阅状态变化后刷新关键词和 URL。技术审计 Agent 可以独立运行。旧的 `ui.desktop` 导入路径仍保留兼容。
 
 扩词模型会同时收到：种子词、需求描述、合并后的业务资料，以及已有页面的标题、Meta、H1-H3 和清洗正文（抓取失败时传递错误状态）。
 
@@ -110,6 +128,65 @@ COMPETITOR_LLM_MODEL=
 ```
 
 未设置的竞品模型字段自动回退到对应的 `LLM_*`。
+
+## 技术 SEO 审计
+
+技术 SEO 标签页可独立运行，最少只需输入客户域名。第一版流程：
+
+```text
+域名 + 可选审计目标/业务背景/核心页面
+→ 读取 robots.txt 与 Sitemap
+→ 受控同域抓取页面和内链
+→ 提取状态码、Title、Meta、H1、canonical、robots meta、JSON-LD 等事实
+→ 可选对少量代表页运行本地 Lighthouse
+→ Python 对照本地官方来源规则库命中问题
+→ LLM 只能整理既有 finding_id 和执行顺序
+→ Python 校验后输出 P0/P1/P2 报告
+```
+
+技术规则位于 `agents/technical_seo_agent/knowledge/core_rules.json`，每条包含来源、核对日期、适用范围、限制、修复和验收方法。第一版引用百度搜索资源平台官方入口以及 Google Search Central、Schema.org、Chrome/Web.dev 的具体公开文档；不会把通用规则冒充成百度对客户网站的具体结论。
+
+Lighthouse 是可选的实验室检测。需要本机安装 Node.js、Chrome/Edge 和 Lighthouse CLI：
+
+```powershell
+npm install -g lighthouse
+```
+
+如果没有安装，审计仍会继续，并在 `lighthouse.json` 和报告限制中记录“未执行”；不会生成虚假性能分数。Lighthouse 数据也不会被表述为真实用户体验或百度排名原因。
+
+技术审计输出：
+
+```text
+output/<项目>/<北京时间戳>/technical_seo/
+├── crawl_config.json
+├── robots_snapshot.txt
+├── sitemap_snapshot.json
+├── pages.json
+├── link_graph.json
+├── lighthouse.json
+├── rule_findings.json
+├── audit_report.json
+└── audit_report.md
+```
+
+未提供百度搜索资源平台、GSC 或服务器日志数据时，报告只描述公共网站可验证事实，不判断真实收录、曝光、排名或蜘蛛访问。
+
+技术审计 CLI 离线测试：
+
+```powershell
+python main.py technical-seo --domain https://example.com --core-urls /product --mock
+```
+
+真实审计示例：
+
+```powershell
+python main.py technical-seo `
+  --domain https://example.com `
+  --goal "检查核心产品页抓取与索引基础" `
+  --files materials/company.pdf `
+  --core-urls https://example.com/product `
+  --max-pages 50
+```
 
 运行时会显示结构化步骤：读取资料、解析页面、扩展候选词、查询百度 SERP（x/N）、排序和完成。桌面 UI 会把同一组事件显示为进度条和执行时间线；其他 Agent 可复用 `tools/progress.py` 的 `ProgressReporter`。
 

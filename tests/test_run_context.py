@@ -25,6 +25,7 @@ class TestRunContext(unittest.TestCase):
             self.assertTrue((run.root_dir / "input").is_dir())
             self.assertTrue((run.root_dir / "keyword").is_dir())
             self.assertTrue((run.root_dir / "competitor").is_dir())
+            self.assertTrue((run.root_dir / "technical_seo").is_dir())
             payload = json.loads(run.run_file.read_text(encoding="utf-8"))
             self.assertEqual(payload["project_name"], "企业知识库")
 

@@ -20,13 +20,21 @@ from agents.serp_competitor_agent import (
     MockCompetitorLLM,
     SerpCompetitorAgent,
 )
-from core.config import load_competitor_llm_config, load_llm_config
+from agents.technical_seo_agent import (
+    MockTechnicalSEOAuditLLM,
+    SiteAuditSnapshot,
+    TechnicalAuditInput,
+    TechnicalAuditOutput,
+    TechnicalSEOAgent,
+)
+from core.config import load_competitor_llm_config, load_llm_config, load_technical_seo_llm_config
 from core.llm import OpenAILLM
 from core.run_context import RunContext, build_source_manifest
 from tools.baidu_serp import BaiduSERP, BaiduSERPClient
 from tools.baidu_browser import BaiduBrowserFallback
 from tools.file_reader import combine_documents, read_documents
 from tools.progress import ProgressReporter
+from tools.site_audit import SiteAuditCrawler, canonicalize_url, normalize_root_url
 from tools.serp_url_tool import SerpURLTool, collect_suggestions
 from tools.webpage import WebPageContent, fetch_webpage
 
@@ -597,6 +605,213 @@ def render_competitor_report(output: CompetitorAnalysisOutput) -> str:
         if page.error:
             lines.append(f"- 抓取失败：{page.error}")
         lines.append("")
+    return "\n".join(lines)
+
+
+def run_technical_seo_audit(
+    *,
+    domain: str,
+    audit_goal: str = "",
+    business_text: str = "",
+    material_files: list[str] | None = None,
+    search_context: str = "",
+    core_urls: list[str] | None = None,
+    excluded_paths: list[str] | None = None,
+    max_pages: int = 50,
+    run_lighthouse: bool = True,
+    lighthouse_limit: int = 3,
+    mock: bool = False,
+    progress: ProgressReporter | None = None,
+) -> tuple[TechnicalAuditInput, SiteAuditSnapshot, TechnicalAuditOutput]:
+    """执行技术审计：工具抓取事实、Python 匹配规则、LLM 整理结论。"""
+    progress = progress or ProgressReporter()
+    root_url = normalize_root_url(domain)
+    files = material_files or []
+    documents = read_documents(files) if files else []
+    combined_business = "\n\n".join(
+        part for part in (business_text.strip(), combine_documents(documents)) if part
+    )[:120_000]
+    normalized_core = [
+        canonicalize_url(
+            url if url.startswith(("http://", "https://")) else root_url.rstrip("/") + "/" + url.lstrip("/")
+        )
+        for url in (core_urls or [])
+    ]
+    request = TechnicalAuditInput(
+        domain=root_url,
+        audit_goal=audit_goal,
+        business_text=combined_business,
+        search_context=search_context,
+        source_files=files,
+        core_urls=normalized_core,
+        excluded_paths=excluded_paths or [],
+        max_pages=max_pages,
+        run_lighthouse=run_lighthouse,
+        lighthouse_limit=lighthouse_limit,
+    )
+    if mock:
+        snapshot = _mock_technical_snapshot(root_url, normalized_core)
+        llm, model = MockTechnicalSEOAuditLLM(), "mock"
+    else:
+        with SiteAuditCrawler() as crawler:
+            snapshot = crawler.crawl(
+                root_url,
+                core_urls=normalized_core,
+                excluded_paths=excluded_paths or [],
+                max_pages=max_pages,
+                run_lighthouse_checks=run_lighthouse,
+                lighthouse_limit=lighthouse_limit,
+                progress=progress,
+            )
+        config = load_technical_seo_llm_config()
+        llm, model = OpenAILLM(config), config.model
+    output = TechnicalSEOAgent(llm, model_name=model).run(request, snapshot, progress=progress)
+    return request, snapshot, output
+
+
+def _mock_technical_snapshot(root_url: str, core_urls: list[str]) -> SiteAuditSnapshot:
+    """构造离线技术审计快照，用于验证规则、LLM、UI 和输出衔接。"""
+    from agents.technical_seo_agent import AuditPage, LighthouseResult
+
+    product = core_urls[0] if core_urls else root_url.rstrip("/") + "/product"
+    return SiteAuditSnapshot(
+        root_url=root_url,
+        robots_url=root_url.rstrip("/") + "/robots.txt",
+        robots_status=200,
+        robots_text="User-agent: *\nAllow: /",
+        robots_error="",
+        sitemap_urls=[root_url.rstrip("/") + "/sitemap.xml"],
+        sitemap_statuses={root_url.rstrip("/") + "/sitemap.xml": 200},
+        sitemap_errors=[],
+        discovered_urls=[root_url, product],
+        pages=[
+            AuditPage(
+                url=root_url, final_url=root_url, status_code=200, content_type="text/html",
+                title="Mock 首页", h1=["Mock 首页"], internal_links=[product], robots_allowed=True,
+            ),
+            AuditPage(
+                url=product, final_url=product, status_code=200, content_type="text/html",
+                title="", h1=[], in_sitemap=True, robots_allowed=True,
+            ),
+        ],
+        inlink_counts={root_url: 0, product: 1},
+        crawl_errors=[],
+        lighthouse=[LighthouseResult(url=root_url, available=False, error="Mock 模式未执行 Lighthouse")],
+        coverage_notes=["Mock 模式仅验证流程，不代表真实网站审计结果。"],
+    )
+
+
+def write_technical_seo_output(
+    request: TechnicalAuditInput,
+    snapshot: SiteAuditSnapshot,
+    output: TechnicalAuditOutput,
+    run: RunContext,
+) -> tuple[Path, Path]:
+    """保存技术审计配置、原始事实、规则命中和最终人类可读报告。"""
+    directory = run.agent_dir("technical_seo")
+    (directory / "crawl_config.json").write_text(
+        json.dumps(request.__dict__, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (directory / "robots_snapshot.txt").write_text(snapshot.robots_text, encoding="utf-8")
+    (directory / "sitemap_snapshot.json").write_text(
+        json.dumps({
+            "sitemap_urls": snapshot.sitemap_urls,
+            "statuses": snapshot.sitemap_statuses,
+            "errors": snapshot.sitemap_errors,
+        }, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (directory / "pages.json").write_text(
+        json.dumps([page.__dict__ for page in snapshot.pages], ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (directory / "link_graph.json").write_text(
+        json.dumps({
+            "inlink_counts": snapshot.inlink_counts,
+            "outlinks": {page.url: page.internal_links for page in snapshot.pages},
+        }, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (directory / "lighthouse.json").write_text(
+        json.dumps([item.__dict__ for item in snapshot.lighthouse], ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (directory / "rule_findings.json").write_text(
+        json.dumps([finding.__dict__ | {
+            "references": [reference.__dict__ for reference in finding.references]
+        } for finding in output.findings], ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    report_json = directory / "audit_report.json"
+    report_md = directory / "audit_report.md"
+    report_json.write_text(json.dumps(output.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    report_md.write_text(render_technical_seo_report(output), encoding="utf-8")
+    previous_completed: list[str] = []
+    if run.run_file.exists():
+        try:
+            previous_completed = list(json.loads(run.run_file.read_text(encoding="utf-8")).get("completed_agents", []))
+        except (OSError, json.JSONDecodeError):
+            previous_completed = []
+    run.update_run(
+        status="technical_seo_complete",
+        current_stage="technical_seo",
+        completed_agents=list(dict.fromkeys([*previous_completed, "technical_seo"])),
+        technical_seo_domain=output.domain,
+        technical_seo_findings=len(output.findings),
+    )
+    return report_json, report_md
+
+
+def render_technical_seo_report(output: TechnicalAuditOutput) -> str:
+    """将结构化技术审计排版为证据优先的 Markdown 报告。"""
+    stats = output.statistics
+    lines = [
+        f"# 技术 SEO 审计：{output.domain}",
+        "",
+        f"- 模型：{output.model}",
+        f"- 规则库版本：{output.rules_version}",
+        f"- 审计目标：{output.audit_goal or '未提供'}",
+        f"- 业务资料：{len(output.source_files)} 个文件",
+        f"- 覆盖：发现 {stats.get('discovered_urls', 0)} 个 URL，抓取 {stats.get('crawled_pages', 0)} 页，成功 HTML {stats.get('successful_html_pages', 0)} 页",
+        f"- 问题：P0 {stats.get('priority_counts', {}).get('P0', 0)} / P1 {stats.get('priority_counts', {}).get('P1', 0)} / P2 {stats.get('priority_counts', {}).get('P2', 0)}",
+        "",
+        output.summary or "暂无模型摘要。",
+    ]
+    for priority in ("P0", "P1", "P2"):
+        items = [finding for finding in output.findings if finding.priority == priority]
+        if not items:
+            continue
+        lines.extend(["", f"## {priority}", ""])
+        for finding in items:
+            lines.extend([
+                f"### {finding.title}",
+                f"- 规则：`{finding.rule_id}`",
+                f"- 置信度：{finding.confidence}",
+                f"- 影响页面：{len(finding.affected_urls)} 个",
+            ])
+            lines.extend(f"  - {url}" for url in finding.affected_urls[:30])
+            lines.extend([
+                f"- 影响：{finding.impact}",
+                f"- 修复：{finding.fix}",
+                f"- 验收：{finding.validation}",
+            ])
+            if finding.business_reason:
+                lines.append(f"- 业务原因：{finding.business_reason}")
+            if finding.references:
+                lines.append("- 规则依据：")
+                lines.extend(
+                    f"  - [{reference.source}：{reference.title}]({reference.url})（核对：{reference.checked_at}）"
+                    for reference in finding.references
+                )
+            lines.append("")
+    lines.extend(["", "## 建议执行顺序", ""])
+    lines.extend(f"- {item}" for item in output.next_steps) if output.next_steps else lines.append("- 暂无")
+    if output.issue_groups:
+        lines.extend(["", "## 问题分组与依赖", ""])
+        for group in output.issue_groups:
+            lines.append(f"- {group.get('group_name', '问题组')}：{'、'.join(group.get('finding_ids', []))}")
+            if group.get("dependency_note"):
+                lines.append(f"  - 依赖说明：{group['dependency_note']}")
+    lines.extend(["", "## 数据限制", ""])
+    lines.extend(f"- {item}" for item in output.limitations)
+    if output.validation_warnings:
+        lines.extend(["", "## 输出校验提示", ""])
+        lines.extend(f"- {item}" for item in output.validation_warnings)
     return "\n".join(lines)
 
 
