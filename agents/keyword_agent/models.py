@@ -6,6 +6,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class KeywordAgentInput:
+    """关键词 Agent 的原始输入与数量限制。"""
     seeds: list[str]
     requirement: str = ""
     business_text: str = ""
@@ -16,6 +17,7 @@ class KeywordAgentInput:
 
 @dataclass(frozen=True)
 class CandidateKeyword:
+    """LLM 扩展并按搜索任务去重后的内部候选词。"""
     keyword: str
     variants: list[str]
     intent: str
@@ -56,6 +58,7 @@ class KeywordCandidateOutput:
 
 @dataclass(frozen=True)
 class CompetitionEvidence:
+    """根据当前 SERP 快照计算的可解释竞争证据。"""
     score: int
     level: str
     exact_title_ratio: float
@@ -67,6 +70,7 @@ class CompetitionEvidence:
 
 @dataclass(frozen=True)
 class KeywordOpportunity:
+    """一个已查询 SERP 的完整关键词机会记录。"""
     keyword: str
     variants: list[str]
     intent: str
@@ -77,6 +81,7 @@ class KeywordOpportunity:
     suggestions: list[str]
     related_searches: list[str]
     top_urls: list[str]
+    filtered_urls: list[dict[str, str]]
     opportunity_score: int
     priority: str
     rationale: str
@@ -86,6 +91,7 @@ class KeywordOpportunity:
 
 @dataclass(frozen=True)
 class KeywordAgentOutput:
+    """关键词 Agent 的最终结构化输出。"""
     seeds: list[str]
     requirement: str
     model: str
@@ -96,6 +102,7 @@ class KeywordAgentOutput:
     warnings: list[str]
 
     def to_dict(self) -> dict[str, Any]:
+        """序列化全部字段并附带下游 Agent 可读的字段说明。"""
         payload = asdict(self)
         payload["_field_descriptions"] = {
             "seeds": "种子词：本次扩词的起点。",
@@ -115,6 +122,7 @@ class KeywordAgentOutput:
             "suggestions": "百度下拉联想词。",
             "related_searches": "百度相关搜索词。",
             "top_urls": "本次 SERP 获取到的前列页面 URL，进入竞品分析前需再次校验。",
+            "filtered_urls": "因广告、中转或搜索聚合属性被排除的 URL 及具体原因。",
             "opportunity_score": "关键词机会分：业务价值与 SERP 可进入性的组合分数。",
             "priority": "业务优先级：P1、P2 或 P3。",
             "rationale": "本次排序理由。",

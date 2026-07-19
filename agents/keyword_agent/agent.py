@@ -66,6 +66,7 @@ class KeywordAgent:
     """关键词机会流程：LLM 扩词 → 百度快照 → 确定性规则打分 → LLM 证据排序。"""
 
     def __init__(self, llm: JSONLLM, serp_client: BaiduSERPClient | None = None, *, model_name: str = "unknown"):
+        """注入模型和可替换 SERP 客户端，便于真实运行与离线测试共用逻辑。"""
         self.llm = llm
         self.serp = serp_client or BaiduSERPClient()
         self.model_name = model_name
@@ -78,6 +79,7 @@ class KeywordAgent:
         existing_pages: list[dict[str, str]] | None = None,
         progress: ProgressReporter | None = None,
     ) -> KeywordAgentOutput:
+        """执行旧版一键流程：扩词、逐词查 SERP、规则评分和模型排序。"""
         progress = progress or ProgressReporter()
         pages = existing_pages or []
         progress.started("keyword.expand", "扩展候选词", "LLM 正在扩展、聚类并标注意图")
@@ -167,6 +169,11 @@ class KeywordAgent:
             suggestions=serp.suggestions,
             related_searches=serp.related_searches,
             top_urls=[result.url for result in serp.results if _valid_url(result.url)],
+            filtered_urls=[{
+                "url": item.url,
+                "title": item.title,
+                "reason": item.reason,
+            } for item in serp.filtered_results],
             opportunity_score=score,
             priority=priority(score, candidate.business_fit, competition.level),
             rationale=rationales.get(_key(candidate.keyword)) or candidate.rationale,
@@ -286,6 +293,11 @@ class KeywordAgent:
             suggestions=serp.suggestions,
             related_searches=serp.related_searches,
             top_urls=[result.url for result in serp.results if _valid_url(result.url)],
+            filtered_urls=[{
+                "url": item.url,
+                "title": item.title,
+                "reason": item.reason,
+            } for item in serp.filtered_results],
             opportunity_score=score,
             priority=priority(score, candidate.business_fit, competition.level),
             rationale=rationales.get(_key(candidate.keyword)) or candidate.rationale,
@@ -311,6 +323,7 @@ class KeywordAgent:
 class MockKeywordLLM:
     """固定响应的离线模型，用于 UI 演示和不会消耗 API 配额的测试。"""
     def chat_json(self, system: str, user: str, *, name: str = "call", temperature: float = 0.3) -> dict[str, Any]:
+        """按调用名称返回固定结构，验证流程时不会访问真实模型。"""
         if name == "expand_keywords":
             return {"candidates": [
                 {"keyword": "企业知识库私有化部署", "variants": ["私有化企业知识库部署"], "intent": "transaction", "business_fit": 5, "commercial_proximity": 5, "specificity": 4, "rationale": "直接对应采购与部署需求"},

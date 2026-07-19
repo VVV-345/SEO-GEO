@@ -10,7 +10,10 @@ from .baidu_serp import SearchResult, is_baidu_verification_page, parse_serp_htm
 
 
 class BaiduBrowserFallback:
+    """用系统 Edge 渲染百度结果页的低频备用采集器。"""
+
     def __init__(self, *, timeout_ms: int = 20_000, channel: str = "msedge") -> None:
+        """保存浏览器启动参数；真正使用前不会创建进程。"""
         self.timeout_ms = timeout_ms
         self.channel = channel
         self._playwright = None
@@ -39,6 +42,7 @@ class BaiduBrowserFallback:
             raise
 
     def search_results(self, keyword: str, *, limit: int = 10) -> tuple[list[str], list[SearchResult]]:
+        """打开一个百度结果页，读取相关搜索和自然结果后关闭页面。"""
         self._ensure_started()
         assert self._context is not None
         page = self._context.new_page()
@@ -65,6 +69,7 @@ class BaiduBrowserFallback:
 
     @staticmethod
     def _extract_links_from_dom(page, limit: int) -> list[SearchResult]:
+        """HTML 解析失败时直接从渲染后的链接 DOM property 提取结果。"""
         items: list[SearchResult] = []
         locators = page.locator("#content_left h3 a, #results h3 a, .c-result h3 a")
         for index in range(min(locators.count(), limit)):
@@ -78,6 +83,7 @@ class BaiduBrowserFallback:
         return items
 
     def close(self) -> None:
+        """按上下文、浏览器、Playwright 的依赖顺序安全释放资源。"""
         if self._context is not None:
             self._context.close()
         if self._browser is not None:

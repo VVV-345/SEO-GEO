@@ -20,6 +20,7 @@ class SerpURLTool:
     """可作为上下文管理器使用的百度 URL 查询工具。"""
 
     def __init__(self, *, timeout: float = 12, delay: float = 3.0, browser: bool = True) -> None:
+        """创建带可选浏览器回退的百度 SERP 客户端。"""
         fallback = BaiduBrowserFallback() if browser else None
         self.client = BaiduSERPClient(timeout=timeout, delay=delay, browser_fallback=fallback)
 
@@ -45,12 +46,15 @@ class SerpURLTool:
         return results
 
     def close(self) -> None:
+        """关闭 HTTP 会话与可能启动的浏览器。"""
         self.client.close()
 
     def __enter__(self) -> "SerpURLTool":
+        """进入上下文并返回工具本身。"""
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:
+        """退出上下文时始终释放网络和浏览器资源。"""
         self.close()
 
 

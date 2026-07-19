@@ -11,7 +11,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Protocol
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -40,6 +40,17 @@ class SearchResult:
 
 
 @dataclass(frozen=True)
+class FilteredSearchResult:
+    """未进入竞品分析的 SERP 结果及其可审计过滤原因。"""
+
+    rank: int
+    title: str
+    url: str
+    domain: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class BaiduSERP:
     keyword: str
     suggestions: list[str] = field(default_factory=list)
@@ -47,14 +58,19 @@ class BaiduSERP:
     results: list[SearchResult] = field(default_factory=list)
     complete: bool = False
     error: str = ""
+    filtered_results: list[FilteredSearchResult] = field(default_factory=list)
 
 
 class SERPFallback(Protocol):
     """浏览器等备用采集器的最小接口，便于注入测试或替换实现。"""
 
-    def search_results(self, keyword: str, *, limit: int = 10) -> tuple[list[str], list[SearchResult]]: ...
+    def search_results(self, keyword: str, *, limit: int = 10) -> tuple[list[str], list[SearchResult]]:
+        """返回相关搜索和自然结果，失败时由具体实现抛出可读异常。"""
+        ...
 
-    def close(self) -> None: ...
+    def close(self) -> None:
+        """释放备用采集器持有的浏览器或网络资源。"""
+        ...
 
 
 class BaiduSERPClient:
@@ -68,6 +84,7 @@ class BaiduSERPClient:
         resolve_top_n: int = 10,
         browser_fallback: SERPFallback | None = None,
     ):
+        """配置超时、请求节奏、URL 解析上限和可选浏览器回退。"""
         self.timeout = timeout
         self.delay = delay
         # 只解析前 N 条的真实落地 URL，超出部分丢弃，控制 /link 跳转请求量。
@@ -81,6 +98,7 @@ class BaiduSERPClient:
         self.session.headers.update(BAIDU_HEADERS)
 
     def search(self, keyword: str, *, limit: int = 10) -> BaiduSERP:
+        """按桌面 HTML、移动 HTML、浏览器顺序查询一个关键词。"""
         self._warm_up()
         suggestions: list[str] = []
         partial_errors: list[str] = []
@@ -131,7 +149,12 @@ class BaiduSERPClient:
                     if "安全验证" in str(error):
                         self._browser_blocked = True
                     partial_errors.append(f"浏览器回退失败：{error}")
-            results = self._finalize_results(results)
+            results, filtered_results = self._finalize_results(results)
+            if not results and filtered_results:
+                reasons = list(dict.fromkeys(item.reason for item in filtered_results))
+                partial_errors.append(
+                    f"解析到 {len(filtered_results)} 条结果，但均被竞品 URL 规则过滤：{'、'.join(reasons)}"
+                )
             if not results:
                 # HTTP 200 不代表拿到了自然结果：百度可能返回验证页、广告页，或更换了 DOM。
                 # 必须显式记录，避免上层把“没有解析到”误判为“这个词没有竞争”。
@@ -146,6 +169,7 @@ class BaiduSERPClient:
                 results,
                 len(results) >= min(self.resolve_top_n, limit),
                 "；".join(partial_errors),
+                filtered_results,
             )
         except (requests.RequestException, ValueError) as error:
             partial_errors.append(f"自然结果获取失败：{error}")
@@ -164,7 +188,12 @@ class BaiduSERPClient:
         errors = list(prior_errors)
         try:
             related, results = self.browser_fallback.search_results(keyword, limit=limit)
-            results = self._finalize_results(results)
+            results, filtered_results = self._finalize_results(results)
+            if not results and filtered_results:
+                reasons = list(dict.fromkeys(item.reason for item in filtered_results))
+                errors.append(
+                    f"解析到 {len(filtered_results)} 条结果，但均被竞品 URL 规则过滤：{'、'.join(reasons)}"
+                )
             if not results:
                 errors.append("浏览器页面未解析到百度自然结果")
             if self.delay:
@@ -176,6 +205,7 @@ class BaiduSERPClient:
                 results,
                 len(results) >= min(self.resolve_top_n, limit),
                 "；".join(errors),
+                filtered_results,
             )
         except Exception as error:
             if "安全验证" in str(error):
@@ -200,16 +230,31 @@ class BaiduSERPClient:
             # 预热失败不致命：继续走正常采集，最坏只是少一份会话 Cookie。
             pass
 
-    def _finalize_results(self, results: list[SearchResult]) -> list[SearchResult]:
-        """只解析前 N 条的真实落地 URL，其余丢弃。
+    def _finalize_results(
+        self, results: list[SearchResult]
+    ) -> tuple[list[SearchResult], list[FilteredSearchResult]]:
+        """解析并筛选适合抓取正文的落地页，同时保留过滤原因。
 
-        超出 resolve_top_n 的结果只携带百度中转 URL，保留会让竞争度评分把
-        domain 误判成 baidu.com，因此截断而不是保留未解析项。
+        先尝试解析百度中转链接；只有仍停留在中转/广告/搜索聚合页的结果才会
+        被过滤。过滤不会伪造替代 URL，也不会把站外普通内容页静默删除。
         """
-        cap = min(self.resolve_top_n, len(results))
-        return [self._resolve_result(item) for item in results[:cap]]
+        accepted: list[SearchResult] = []
+        filtered: list[FilteredSearchResult] = []
+        for item in results:
+            resolved = self._resolve_result(item)
+            reason = competitor_url_rejection_reason(resolved.url)
+            if reason:
+                filtered.append(FilteredSearchResult(
+                    resolved.rank, resolved.title, resolved.url, resolved.domain, reason
+                ))
+                continue
+            accepted.append(resolved)
+            if len(accepted) >= self.resolve_top_n:
+                break
+        return accepted, filtered
 
     def _search_mobile(self, keyword: str, *, limit: int) -> tuple[list[str], list[SearchResult], str]:
+        """请求移动版百度，在桌面结构不可用时提供轻量回退。"""
         try:
             response = self.session.get(
                 "https://m.baidu.com/s",
@@ -234,7 +279,11 @@ class BaiduSERPClient:
 
     def _resolve_result(self, result: SearchResult) -> SearchResult:
         """尽量把百度中转链接解析为落地 URL；失败时保留原始链接。"""
-        if result.domain not in {"baidu.com", "www.baidu.com", "m.baidu.com"} or "/link" not in result.url:
+        redirect_paths = ("/link", "/other.php", "/baidu.php")
+        if (
+            result.domain not in {"baidu.com", "www.baidu.com", "m.baidu.com"}
+            or not any(path in urlparse(result.url).path for path in redirect_paths)
+        ):
             return result
         if self.delay:
             # /link 跳转请求之间加随机抖动，避免连续无间隔的爆发式请求触发风控。
@@ -251,6 +300,7 @@ class BaiduSERPClient:
         return result
 
     def _suggest(self, keyword: str) -> list[str]:
+        """读取百度下拉接口，兼容 JSON 与 JSONP 两种返回格式。"""
         response = self.session.get(
             "https://suggestion.baidu.com/su",
             params={"wd": keyword, "action": "opensearch"},
@@ -270,6 +320,32 @@ class BaiduSERPClient:
         if isinstance(data, dict):
             return [str(item).strip() for item in data.get("s", []) if str(item).strip()][:10]
         return []
+
+
+def competitor_url_rejection_reason(url: str) -> str:
+    """判断 URL 是否明显不适合作为竞品正文，并返回中文原因。
+
+    这里只排除可以确定的百度广告/中转/站内搜索页面和明确的付费搜索跟踪页；
+    普通内容页即使之后可能返回 403，也仍保留给竞品抓取阶段处理。
+    """
+    parsed = urlparse(url)
+    host = parsed.netloc.lower().split(":", 1)[0].removeprefix("www.")
+    path = parsed.path.lower().rstrip("/") or "/"
+    query = parse_qs(parsed.query.lower())
+    if parsed.scheme not in {"http", "https"} or not host:
+        return "不是有效的 HTTP(S) 落地页"
+    if host in {"ada.baidu.com", "e.baidu.com", "pos.baidu.com", "union.baidu.com"}:
+        return "百度广告或推广服务页面"
+    if host in {"baidu.com", "m.baidu.com"} and path in {"/other.php", "/link", "/baidu.php"}:
+        return "百度中转链接未能解析为真实落地页"
+    if host in {"baidu.com", "m.baidu.com"} and path in {"/s", "/search"}:
+        return "百度站内搜索结果页，不是独立竞品正文"
+    if host == "wenku.baidu.com" and path.startswith("/search"):
+        return "百度文库搜索聚合页，不是独立文档正文"
+    paid_mediums = {value for values in query.get("utm_medium", []) for value in values.split(",")}
+    if paid_mediums & {"cpc", "ppc", "paid", "paidsearch", "paid_search"}:
+        return "URL 带有明确的付费搜索跟踪参数"
+    return ""
 
 
 def is_baidu_verification_page(html: str) -> bool:

@@ -80,6 +80,7 @@ def read_document(path: str | Path, *, max_chars: int = 200_000) -> DocumentCont
 
 
 def read_documents(paths: list[str | Path], *, max_chars_each: int = 200_000) -> list[DocumentContent]:
+    """按输入顺序读取多个资料文件，任一格式错误时向调用方明确抛出。"""
     return [read_document(path, max_chars=max_chars_each) for path in paths]
 
 

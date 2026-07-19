@@ -15,6 +15,7 @@ from tools.progress import ProgressReporter
 
 class FakeSERPClient:
     def search(self, keyword: str, *, limit: int = 10) -> BaiduSERP:
+        """返回五条固定结果，用于验证完整 SERP 下的排序流程。"""
         results = [
             SearchResult(1, f"{keyword}完整指南", "https://example.com/guide", "example.com"),
             SearchResult(2, "经验分享", "https://zhihu.com/question/1", "zhihu.com"),
@@ -29,14 +30,17 @@ class SuggestionFailureSERPClient:
     """用于说明 Agent 可接受部分 SERP；具体 HTTP 容错由工具层负责。"""
 
     def search(self, keyword: str, *, limit: int = 10) -> BaiduSERP:
+        """返回不完整结果，验证部分采集失败不会中断 Agent。"""
         return BaiduSERP(keyword=keyword, error="下拉词获取失败", complete=False)
 
 
 class CapturingLLM(MockKeywordLLM):
     def __init__(self):
+        """初始化扩词阶段用户消息的记录字段。"""
         self.expand_user = ""
 
     def chat_json(self, system, user, *, name="call", temperature=0.3):
+        """记录扩词输入后复用 Mock 模型响应。"""
         if name == "expand_keywords":
             self.expand_user = user
         return super().chat_json(system, user, name=name, temperature=temperature)
@@ -44,11 +48,13 @@ class CapturingLLM(MockKeywordLLM):
 
 class TestCompetitionRules(unittest.TestCase):
     def test_unknown_when_no_results(self):
+        """没有自然结果时应标记为未知竞争，而非低竞争。"""
         evidence = estimate_competition("企业知识库", [])
         self.assertEqual(evidence.level, "unknown")
         self.assertEqual(evidence.score, 50)
 
     def test_rule_uses_visible_serp_features(self):
+        """竞争评分应使用标题覆盖、强势域名、首页和域名分布。"""
         results = [
             SearchResult(1, "企业知识库部署", "https://zhihu.com/question/1", "zhihu.com"),
             SearchResult(2, "企业知识库方案", "https://baike.baidu.com/item/a", "baike.baidu.com"),
@@ -63,6 +69,7 @@ class TestCompetitionRules(unittest.TestCase):
         self.assertEqual(evidence.level, "medium")
 
     def test_priority_needs_business_fit(self):
+        """即使 SERP 容易，业务匹配低的词也不能进入 P1。"""
         competition = estimate_competition("x", [
             SearchResult(i, "弱相关", f"https://site{i}.cn/a", f"site{i}.cn") for i in range(1, 6)
         ])
@@ -73,6 +80,7 @@ class TestCompetitionRules(unittest.TestCase):
 
 class TestKeywordAgent(unittest.TestCase):
     def test_end_to_end_with_injected_serp(self):
+        """注入固定 SERP 后应生成完整机会字段和进度事件。"""
         progress = ProgressReporter()
         output = KeywordAgent(MockKeywordLLM(), FakeSERPClient(), model_name="mock").run(
             KeywordAgentInput(
@@ -107,6 +115,7 @@ class TestKeywordAgent(unittest.TestCase):
         self.assertEqual(output.requirement, "重点研究制造业，排除个人知识库")
 
     def test_requirement_is_sent_to_expand_llm(self):
+        """用户需求描述必须进入扩词模型上下文。"""
         llm = CapturingLLM()
         KeywordAgent(llm, FakeSERPClient(), model_name="mock").run(
             KeywordAgentInput(seeds=["企业知识库"], requirement="只研究政企采购场景")
@@ -114,6 +123,7 @@ class TestKeywordAgent(unittest.TestCase):
         self.assertIn("只研究政企采购场景", llm.expand_user)
 
     def test_two_stage_mock_only_builds_selected_keywords(self):
+        """两阶段流程只应为人工选择的候选生成最终机会。"""
         candidates = generate_keyword_candidates(
             seeds=["企业知识库"],
             requirement="只研究企业采购",
@@ -130,6 +140,7 @@ class TestKeywordAgent(unittest.TestCase):
         self.assertEqual([item.keyword for item in final.opportunities], selected)
 
     def test_partial_serp_does_not_abort_agent(self):
+        """SERP 不完整时应保留候选并统一标记待验证。"""
         output = KeywordAgent(MockKeywordLLM(), SuggestionFailureSERPClient(), model_name="mock").run(
             KeywordAgentInput(["企业知识库"], candidate_limit=10)
         )

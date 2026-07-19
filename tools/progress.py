@@ -46,10 +46,12 @@ class ProgressReporter:
     """
 
     def __init__(self, listeners: list[ProgressListener] | None = None) -> None:
+        """初始化事件历史与订阅者列表。"""
         self.events: list[ProgressEvent] = []
         self._listeners = list(listeners or [])
 
     def subscribe(self, listener: ProgressListener) -> None:
+        """追加一个进度订阅者，例如 CLI 打印器或 Tkinter 渲染器。"""
         self._listeners.append(listener)
 
     def emit(
@@ -62,6 +64,7 @@ class ProgressReporter:
         current: int | None = None,
         total: int | None = None,
     ) -> ProgressEvent:
+        """创建、保存并广播一条事件；监听器失败不会影响业务流程。"""
         event = ProgressEvent(stage, label, message, status, current, total)
         self.events.append(event)
         for listener in self._listeners:
@@ -73,17 +76,21 @@ class ProgressReporter:
         return event
 
     def started(self, stage: str, label: str, message: str, *, total: int | None = None) -> ProgressEvent:
+        """发送阶段开始事件。"""
         return self.emit(stage, label, message, status="started", current=0 if total else None, total=total)
 
     def step(
         self, stage: str, label: str, message: str, *, current: int | None = None, total: int | None = None
     ) -> ProgressEvent:
+        """发送阶段执行中的进度事件。"""
         return self.emit(stage, label, message, status="running", current=current, total=total)
 
     def completed(
         self, stage: str, label: str, message: str, *, total: int | None = None
     ) -> ProgressEvent:
+        """发送阶段完成事件，并在有总量时把进度设为 100%。"""
         return self.emit(stage, label, message, status="completed", current=total, total=total)
 
     def failed(self, stage: str, label: str, message: str) -> ProgressEvent:
+        """发送阶段失败事件；异常本身仍由业务层决定是否抛出。"""
         return self.emit(stage, label, message, status="failed")

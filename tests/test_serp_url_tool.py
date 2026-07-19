@@ -6,9 +6,11 @@ from tools.serp_url_tool import SerpURLTool
 
 class FakeClient:
     def __init__(self):
+        """初始化实际查询词记录。"""
         self.queries = []
 
     def search(self, keyword, *, limit=10):
+        """记录查询并返回一条固定落地页。"""
         self.queries.append(keyword)
         return BaiduSERP(
             keyword=keyword,
@@ -17,11 +19,13 @@ class FakeClient:
         )
 
     def close(self):
+        """模拟真实客户端的资源释放接口。"""
         pass
 
 
 class TestSerpURLTool(unittest.TestCase):
     def test_fetch_many_queries_only_selected_keywords(self):
+        """批量工具不得暗中查询用户未选择的候选词。"""
         tool = SerpURLTool.__new__(SerpURLTool)
         tool.client = FakeClient()
         selected = ["词A", "词C"]
@@ -30,6 +34,7 @@ class TestSerpURLTool(unittest.TestCase):
         self.assertEqual(set(results), set(selected))
 
     def test_single_retry_queries_only_one_keyword(self):
+        """单词重试只能发起该词的一次查询。"""
         tool = SerpURLTool.__new__(SerpURLTool)
         tool.client = FakeClient()
         result = tool.fetch("失败词")

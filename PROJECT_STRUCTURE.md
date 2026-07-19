@@ -19,7 +19,7 @@ SEO-GEO/
 │   │   ├── models.py               # 输入输出结构
 │   │   ├── prompts.py              # 扩词与排序提示词
 │   │   └── scoring.py              # 可解释 SERP 竞争规则
-│   ├── serp_competitor_agent/      # 预留
+│   ├── serp_competitor_agent/      # 抓取前列页面并归纳共同主题、FAQ 与内容缺口
 │   ├── technical_seo_agent/        # 预留
 │   ├── content_brief_agent/        # 预留
 │   ├── writing_agent/              # 预留

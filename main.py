@@ -9,7 +9,7 @@ for stream in (sys.stdout, sys.stderr):
     if hasattr(stream, "reconfigure"):
         stream.reconfigure(encoding="utf-8", errors="replace")
 
-from app import run_keyword_workflow, write_keyword_output
+from app import create_run_context, run_keyword_workflow, write_keyword_output
 from tools.progress import ProgressEvent, ProgressReporter
 
 
@@ -20,6 +20,7 @@ def print_progress(event: ProgressEvent) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """解析命令行参数，运行指定 Agent，并返回进程退出码。"""
     parser = argparse.ArgumentParser(description="SEO/GEO 多 Agent 系统")
     subparsers = parser.add_subparsers(dest="agent", required=True)
     keyword = subparsers.add_parser("keyword", help="运行关键词机会 Agent")
@@ -34,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     progress = ProgressReporter([print_progress])
+    run = create_run_context(args.seed, output_root=args.output_dir)
     result = run_keyword_workflow(
         seeds=args.seed,
         material_files=args.files,
@@ -44,10 +46,11 @@ def main(argv: list[str] | None = None) -> int:
         mock=args.mock,
         progress=progress,
     )
-    json_path, markdown_path = write_keyword_output(result, args.output_dir)
+    json_path, markdown_path = write_keyword_output(result, args.output_dir, run=run)
     print(f"完成：{len(result.opportunities)} 个关键词机会")
     print(f"JSON: {json_path}")
     print(f"Markdown: {markdown_path}")
+    print(f"Run: {run.root_dir}")
     return 0
 
 

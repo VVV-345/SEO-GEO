@@ -23,11 +23,13 @@ def _compact(text: str) -> str:
 
 
 def _is_authority(domain: str) -> bool:
+    """判断域名是否命中可维护的强势平台启发式名单。"""
     domain = domain.lower().removeprefix("www.")
     return any(domain == item or domain.endswith("." + item) for item in AUTHORITY_DOMAINS)
 
 
 def _is_homepage(url: str) -> bool:
+    """根据 URL 路径判断结果是否指向站点首页。"""
     path = urlparse(url).path.strip("/")
     return not path or path.lower() in {"index.html", "index.htm", "index.php"}
 

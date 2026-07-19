@@ -1,6 +1,6 @@
 # SEO-GEO Agents
 
-Python 实现的中文 SEO/GEO 多 Agent 项目。当前完成关键词机会 Agent，其他 Agent 已预留独立目录。
+Python 实现的中文 SEO/GEO 多 Agent 项目。当前已完成关键词机会 Agent，以及单关键词的 SERP + 竞品分析 Agent。
 
 ## 当前关键词流程
 
@@ -18,6 +18,8 @@ Python 实现的中文 SEO/GEO 多 Agent 项目。当前完成关键词机会 Ag
 ```
 
 百度 URL 采集按三层回退：桌面搜索 HTML → 移动搜索 HTML → 系统 Edge（Playwright）。浏览器回退只读取百度结果页的标题和 URL，不访问竞品正文；一旦静态路径在本次任务中失效，后续关键词会复用同一浏览器上下文。
+
+进入竞品分析前会排除明确的百度广告服务页、无法解析的百度中转链接、百度站内搜索/文库搜索聚合页和带付费搜索跟踪参数的结果。被排除的地址不会静默丢弃，其 URL 与原因会保存在 `filtered_results` / `filtered_urls` 并显示在 UI 和关键词报告中。百度百科等独立内容页不会提前过滤，即使抓取阶段可能返回 403。
 
 > SERP 竞争分是当前百度结果快照的规则估算，不是搜索量、百度指数或第三方关键词难度。百度结构和访问限制可能导致结果不完整。
 
@@ -67,7 +69,47 @@ python main.py keyword `
   --num 20
 ```
 
-输出保存到 `output/keyword_opportunities_<种子词>.json` 和 `.md`。
+输出统一保存在一次运行目录中：
+
+```text
+output/<项目名>/<北京时间戳>/
+├── run.json
+├── input/
+│   ├── project.json
+│   └── source_manifest.json
+├── keyword/
+│   ├── candidates.json
+│   ├── candidates.md
+│   ├── serp_results.json
+│   ├── opportunities.json
+│   └── report.md
+└── competitor/
+    └── <关键词>/
+        ├── pages.json
+        ├── report.json
+        └── report.md
+```
+
+点击“生成候选词”会创建新时间戳目录；之后查询勾选词、重试单词以及后续竞品 Agent 都复用该目录。
+
+## SERP + 竞品分析流程
+
+关键词 Agent 取得落地页 URL 后，切换到“SERP + 竞品”标签页：
+
+1. 从下拉框选择一个确定关键词，界面自动带入该词已取得的 URL。
+2. 人工检查、增删 URL，并选择本次最多抓取的页面数。
+3. 点击“开始 SERP + 竞品分析”。系统逐页提取 Title、Meta Description、H1-H3 层级、FAQ、表格、案例原句、数字原句和清洗正文。
+4. LLM 只根据成功抓取的页面与客户资料，归纳搜索意图、页面类型、共同主题、常见模块、FAQ、案例/数据证据、内容缺口、必写项和建议结构。
+
+单页抓取失败不会中断整个任务；失败原因会保留在页面证据中，也不会被误判为竞品内容缺口。默认与关键词 Agent 共用 `.env` 中的 `LLM_*`，需要单独模型时可配置：
+
+```text
+COMPETITOR_LLM_BASE_URL=
+COMPETITOR_LLM_API_KEY=
+COMPETITOR_LLM_MODEL=
+```
+
+未设置的竞品模型字段自动回退到对应的 `LLM_*`。
 
 运行时会显示结构化步骤：读取资料、解析页面、扩展候选词、查询百度 SERP（x/N）、排序和完成。桌面 UI 会把同一组事件显示为进度条和执行时间线；其他 Agent 可复用 `tools/progress.py` 的 `ProgressReporter`。
 
