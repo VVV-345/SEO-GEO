@@ -1,112 +1,141 @@
 import unittest
 
-from seo_agents.keyword_agent import (
-    Candidate,
-    assign_tier,
-    composite_score,
-    dedupe_candidates,
-    filter_by_relevance,
-    normalize_keyword,
-    run_keyword_agent,
+from app import (
+    build_selected_keyword_output,
+    fetch_keyword_serp,
+    generate_keyword_candidates,
+    render_candidate_report,
+    render_keyword_report,
 )
+from agents.keyword_agent import KeywordAgent, KeywordAgentInput, MockKeywordLLM
+from agents.keyword_agent.scoring import estimate_competition, opportunity_score, priority
+from tools.baidu_serp import BaiduSERP, SearchResult
+from tools.progress import ProgressReporter
 
 
-class _FakeLLM:
-    """按调用名返回写死响应的假客户端。"""
+class FakeSERPClient:
+    def search(self, keyword: str, *, limit: int = 10) -> BaiduSERP:
+        results = [
+            SearchResult(1, f"{keyword}完整指南", "https://example.com/guide", "example.com"),
+            SearchResult(2, "经验分享", "https://zhihu.com/question/1", "zhihu.com"),
+            SearchResult(3, "行业实践", "https://vendor-a.cn/case", "vendor-a.cn"),
+            SearchResult(4, "解决方案", "https://vendor-b.cn/solution", "vendor-b.cn"),
+            SearchResult(5, "产品介绍", "https://vendor-c.cn/product", "vendor-c.cn"),
+        ]
+        return BaiduSERP(keyword, [keyword + " 价格"], [keyword + " 怎么做"], results, True)
 
+
+class SuggestionFailureSERPClient:
+    """用于说明 Agent 可接受部分 SERP；具体 HTTP 容错由工具层负责。"""
+
+    def search(self, keyword: str, *, limit: int = 10) -> BaiduSERP:
+        return BaiduSERP(keyword=keyword, error="下拉词获取失败", complete=False)
+
+
+class CapturingLLM(MockKeywordLLM):
     def __init__(self):
-        self.calls: list[str] = []
+        self.expand_user = ""
 
-    def chat_json(self, system, user, *, name="call", temperature=0.5):
-        self.calls.append(name)
-        if name == "expand":
-            return {"candidates": [
-                {"keyword": "企业知识库私有化部署", "intent": "commercial", "relevance": "high", "note": "a"},
-                {"keyword": " 企业知识库 私有化部署。 ", "intent": "commercial", "relevance": "high", "note": "a 的近重复"},
-                {"keyword": "免费个人笔记软件", "intent": "commercial", "relevance": "low", "note": "客户不做 C 端"},
-                {"keyword": "知识库是什么", "intent": "informational", "relevance": "medium", "note": "b"},
-            ]}
-        # rank 收到的是过滤去重后的 2 个：私有化部署、知识库是什么
-        return {"ranked": [
-            {"keyword": "企业知识库私有化部署", "intent": "commercial", "commercial_intent": 5, "specificity": 4, "serp_difficulty": 3, "rationale": "r1"},
-            {"keyword": "知识库是什么", "intent": "informational", "commercial_intent": 2, "specificity": 2, "serp_difficulty": 4, "rationale": "r2"},
-        ]}
+    def chat_json(self, system, user, *, name="call", temperature=0.3):
+        if name == "expand_keywords":
+            self.expand_user = user
+        return super().chat_json(system, user, name=name, temperature=temperature)
 
 
-class TestNormalize(unittest.TestCase):
-    def test_strips_outer_whitespace_and_trailing_punct(self):
-        self.assertEqual(normalize_keyword(" 企业知识库私有化部署。 "), "企业知识库私有化部署")
+class TestCompetitionRules(unittest.TestCase):
+    def test_unknown_when_no_results(self):
+        evidence = estimate_competition("企业知识库", [])
+        self.assertEqual(evidence.level, "unknown")
+        self.assertEqual(evidence.score, 50)
 
-    def test_collapses_inner_spaces(self):
-        self.assertEqual(normalize_keyword("a   b\tc"), "a b c")
-
-    def test_strips_leading_punct(self):
-        self.assertEqual(normalize_keyword("？企业知识库"), "企业知识库")
-
-
-class TestDedupe(unittest.TestCase):
-    def test_merges_near_duplicates_by_compact_form(self):
-        cs = [
-            Candidate("企业知识库私有化部署", "commercial", "high", ""),
-            Candidate("企业知识库 私有化部署。", "commercial", "high", ""),  # 仅多空格+句号 → 合并
-            Candidate("知识库是什么", "informational", "medium", ""),
+    def test_rule_uses_visible_serp_features(self):
+        results = [
+            SearchResult(1, "企业知识库部署", "https://zhihu.com/question/1", "zhihu.com"),
+            SearchResult(2, "企业知识库方案", "https://baike.baidu.com/item/a", "baike.baidu.com"),
+            SearchResult(3, "企业知识库", "https://example.com", "example.com"),
+            SearchResult(4, "知识管理", "https://other.cn/a", "other.cn"),
+            SearchResult(5, "企业知识库指南", "https://third.cn/a", "third.cn"),
         ]
-        out = dedupe_candidates(cs)
-        self.assertEqual(len(out), 2)
-        self.assertEqual(out[0].keyword, "企业知识库私有化部署")
+        evidence = estimate_competition("企业知识库", results)
+        self.assertEqual(evidence.exact_title_ratio, 0.8)
+        self.assertEqual(evidence.authority_ratio, 0.4)
+        self.assertEqual(evidence.homepage_ratio, 0.2)
+        self.assertEqual(evidence.level, "medium")
 
-    def test_keeps_distinct(self):
-        cs = [Candidate("a", "commercial", "high", ""), Candidate("b", "commercial", "high", "")]
-        self.assertEqual(len(dedupe_candidates(cs)), 2)
-
-
-class TestFilter(unittest.TestCase):
-    def test_drops_low_relevance(self):
-        cs = [
-            Candidate("x", "commercial", "high", ""),
-            Candidate("y", "commercial", "low", ""),
-            Candidate("z", "informational", "medium", ""),
-        ]
-        out = filter_by_relevance(cs)
-        self.assertEqual([c.keyword for c in out], ["x", "z"])
+    def test_priority_needs_business_fit(self):
+        competition = estimate_competition("x", [
+            SearchResult(i, "弱相关", f"https://site{i}.cn/a", f"site{i}.cn") for i in range(1, 6)
+        ])
+        score = opportunity_score(5, 5, 5, competition)
+        self.assertEqual(priority(score, 5, competition.level), "P1")
+        self.assertNotEqual(priority(score, 2, competition.level), "P1")
 
 
-class TestScoring(unittest.TestCase):
-    def test_composite_formula(self):
-        self.assertEqual(composite_score(5, 4, 3), 12)
-        self.assertEqual(composite_score(2, 2, 4), 6)
-        self.assertEqual(composite_score(1, 1, 5), 3)   # 下限
-        self.assertEqual(composite_score(5, 5, 1), 15)  # 上限
-
-    def test_tier_thresholds(self):
-        self.assertEqual(assign_tier(12, "high"), "P1")
-        self.assertEqual(assign_tier(11, "high"), "P1")
-        self.assertEqual(assign_tier(10, "high"), "P2")
-        self.assertEqual(assign_tier(8, "high"), "P2")
-        self.assertEqual(assign_tier(7, "high"), "P3")
-        self.assertEqual(assign_tier(15, "low"), "P3")  # 低相关性强制 P3
-
-
-class TestPipeline(unittest.TestCase):
-    def test_end_to_end_filters_dedupes_and_ranks(self):
-        fake = _FakeLLM()
-        result = run_keyword_agent(
-            seeds=["企业知识库"],
-            business_text="客户做企业知识库私有化部署。",
-            existing_pages=[],
-            llm=fake,
-            num=50,
-            model_name="fake",
+class TestKeywordAgent(unittest.TestCase):
+    def test_end_to_end_with_injected_serp(self):
+        progress = ProgressReporter()
+        output = KeywordAgent(MockKeywordLLM(), FakeSERPClient(), model_name="mock").run(
+            KeywordAgentInput(
+                seeds=["企业知识库"],
+                requirement="重点研究制造业，排除个人知识库",
+                business_text="客户提供私有化企业知识库。",
+                candidate_limit=10,
+            ),
+            progress=progress,
         )
-        self.assertEqual(fake.calls, ["expand", "rank"])
-        self.assertEqual(result.candidates_raw, 4)
-        self.assertEqual(result.candidates_after_filter, 2)  # 丢 low + 合并近重复
-        self.assertEqual(len(result.items), 2)
+        self.assertEqual(len(output.opportunities), 3)
+        self.assertTrue(all(item.serp_complete for item in output.opportunities))
+        self.assertTrue(output.opportunities[0].suggestions)
+        self.assertTrue(output.opportunities[0].top_urls)
+        self.assertEqual(
+            [event.stage for event in progress.events if event.status == "started"],
+            ["keyword.expand", "keyword.serp", "keyword.rank"],
+        )
+        serp_events = [event for event in progress.events if event.stage == "keyword.serp" and event.status == "running"]
+        self.assertEqual((serp_events[-1].current, serp_events[-1].total), (3, 3))
+        report = render_keyword_report(output)
+        self.assertIn("P1", report)
+        self.assertIn("SERP + ", report)
+        self.assertNotIn('"opportunities"', report)
+        self.assertIn("业务评分", report)
+        self.assertIn("百度下拉词", report)
+        self.assertIn("百度相关搜索", report)
+        self.assertIn("SERP 前列 URL", report)
+        self.assertIn("https://example.com/guide", report)
+        self.assertIn("拓展词：", report)
+        self.assertIn("=" * 72, report)
+        self.assertEqual(output.requirement, "重点研究制造业，排除个人知识库")
 
-        tiers = {it.keyword: it.tier for it in result.items}
-        self.assertEqual(tiers["企业知识库私有化部署"], "P1")  # composite=12
-        self.assertEqual(tiers["知识库是什么"], "P3")          # composite=6
-        self.assertEqual(result.items[0].tier, "P1")          # P1 排在 P3 前
+    def test_requirement_is_sent_to_expand_llm(self):
+        llm = CapturingLLM()
+        KeywordAgent(llm, FakeSERPClient(), model_name="mock").run(
+            KeywordAgentInput(seeds=["企业知识库"], requirement="只研究政企采购场景")
+        )
+        self.assertIn("只研究政企采购场景", llm.expand_user)
+
+    def test_two_stage_mock_only_builds_selected_keywords(self):
+        candidates = generate_keyword_candidates(
+            seeds=["企业知识库"],
+            requirement="只研究企业采购",
+            candidate_limit=10,
+            mock=True,
+        )
+        self.assertEqual(len(candidates.candidates), 3)
+        preview = render_candidate_report(candidates)
+        self.assertIn("尚未查询", preview)
+        selected = [candidates.candidates[0].keyword]
+        serp = fetch_keyword_serp(selected, mock=True)
+        self.assertEqual(set(serp), set(selected))
+        final = build_selected_keyword_output(candidates, selected, serp, mock=True)
+        self.assertEqual([item.keyword for item in final.opportunities], selected)
+
+    def test_partial_serp_does_not_abort_agent(self):
+        output = KeywordAgent(MockKeywordLLM(), SuggestionFailureSERPClient(), model_name="mock").run(
+            KeywordAgentInput(["企业知识库"], candidate_limit=10)
+        )
+        self.assertEqual(len(output.opportunities), 3)
+        self.assertTrue(all(item.competition.level == "unknown" for item in output.opportunities))
+        self.assertTrue(all(item.priority == "待验证" for item in output.opportunities))
 
 
 if __name__ == "__main__":
